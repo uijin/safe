@@ -19,10 +19,12 @@ import java.io.File;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.TimeZone;
 
@@ -37,6 +39,15 @@ import org.openintents.safe.wrappers.honeycomb.WrapActionBar;
 import org.openintents.safe.wrappers.honeycomb.ClipboardManager;
 import org.openintents.util.IntentUtils;
 import org.openintents.util.SecureDelete;
+
+import com.dropbox.sync.android.DbxAccount;
+import com.dropbox.sync.android.DbxAccountManager;
+import com.dropbox.sync.android.DbxException;
+import com.dropbox.sync.android.DbxException.Unauthorized;
+import com.dropbox.sync.android.DbxFile;
+import com.dropbox.sync.android.DbxFileSystem;
+import com.dropbox.sync.android.DbxPath;
+import com.dropbox.sync.android.DbxPath.InvalidPathException;
 
 import android.app.AlertDialog;
 import android.app.Dialog;
@@ -105,6 +116,7 @@ public class CategoryList extends ListActivity {
 	public static final int REQUEST_IMPORT_FILENAME = 5;
 	public static final int REQUEST_EXPORT_FILENAME = 6;
 	public static final int REQUEST_BACKUP_FILENAME = 7;
+	public static final int REQUEST_LINK_TO_DBX = 8;
 
 	private static final int ABOUT_KEY = 2;
 
@@ -127,6 +139,10 @@ public class CategoryList extends ListActivity {
 	private int lastPosition=0;
 
 	private AlertDialog autobackupDialog;
+	
+	private DbxAccountManager mDbxManager;
+	private DbxAccount mDbxAccount;
+	private String mTempFilename;
 	
 	private boolean lockOnScreenLock=true;
 	
@@ -622,7 +638,37 @@ public class CategoryList extends ListActivity {
 	private String backupDatabase(String filename){
 		Backup backup=new Backup(this);
 		backup.write(filename);
+
+		// upload file to Dropbox
+		mDbxManager = DbxAccountManager.getInstance(getApplicationContext(), "bp6ppi1j8e6dzjf", "3f3p6r81mm088j0");
+		if (mDbxManager.hasLinkedAccount()) {
+			uploadDropbox(filename);
+		} else {
+			mTempFilename = filename;
+			mDbxManager.startLink(this, REQUEST_LINK_TO_DBX);
+		}
+
 		return backup.getResult();
+	}
+	
+	/**
+	 * upload backup database to Dropbox
+	 * @param filename
+	 */
+	private void uploadDropbox(String filename)
+	{
+		mDbxAccount = mDbxManager.getLinkedAccount();
+		SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss Z", Locale.getDefault());
+		Date now = new Date();
+		try {
+			DbxFileSystem dbxFS = DbxFileSystem.forAccount(mDbxAccount);
+			DbxFile destFile = dbxFS.create(new DbxPath(sdf.format(now)+".xml"));
+			destFile.writeFromExistingFile(new File(filename), false);
+			destFile.close();
+		} catch (IOException e) {
+			e.printStackTrace();
+			Log.e(TAG, "uploadDropbox() fail");
+		}
 	}
 
 
@@ -670,7 +716,6 @@ public class CategoryList extends ListActivity {
 		}
 		@Override
 		protected String doInBackground(String... filenames) {
-
 			String response = backupDatabase(filenames[0]);
 			return response;
 		}
@@ -770,6 +815,12 @@ public class CategoryList extends ListActivity {
 				path = i.getData().getPath();
 				importFile(path);
 				Preferences.setExportPath(this, path);
+			}
+			break;
+			
+		case REQUEST_LINK_TO_DBX:
+			if (resultCode == RESULT_OK) {
+				uploadDropbox(mTempFilename);  
 			}
 			break;
 		}
