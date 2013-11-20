@@ -658,11 +658,11 @@ public class CategoryList extends ListActivity {
 	private void uploadDropbox(String filename)
 	{
 		mDbxAccount = mDbxManager.getLinkedAccount();
-		SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss Z", Locale.getDefault());
-		Date now = new Date();
+		SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd_HH:mm:ss", Locale.getDefault());
 		try {
 			DbxFileSystem dbxFS = DbxFileSystem.forAccount(mDbxAccount);
-			DbxFile destFile = dbxFS.create(new DbxPath(sdf.format(now)+".xml"));
+			StringBuffer sb = new StringBuffer("oisafe.").append(sdf.format(new Date())).append(".xml");
+			DbxFile destFile = dbxFS.create(new DbxPath(sb.toString()));
 			destFile.writeFromExistingFile(new File(filename), false);
 			destFile.close();
 		} catch (IOException e) {

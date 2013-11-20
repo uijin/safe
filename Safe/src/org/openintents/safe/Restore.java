@@ -19,6 +19,8 @@ package org.openintents.safe;
 import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.Reader;
 import java.util.List;
 
 import javax.xml.parsers.ParserConfigurationException;
@@ -30,6 +32,15 @@ import org.openintents.safe.password.Master;
 import org.xml.sax.InputSource;
 import org.xml.sax.SAXException;
 import org.xml.sax.XMLReader;
+
+import com.dropbox.sync.android.DbxAccount;
+import com.dropbox.sync.android.DbxAccountManager;
+import com.dropbox.sync.android.DbxException;
+import com.dropbox.sync.android.DbxFile;
+import com.dropbox.sync.android.DbxFileInfo;
+import com.dropbox.sync.android.DbxPath;
+import com.dropbox.sync.android.DbxException.Unauthorized;
+import com.dropbox.sync.android.DbxFileSystem;
 
 import android.app.Activity;
 import android.app.AlertDialog;
@@ -44,6 +55,7 @@ import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Looper;
 import android.preference.PreferenceManager;
 import android.util.Log;
 import android.view.View;
@@ -68,6 +80,10 @@ public class Restore extends Activity {
 	public static final String KEY_FILE_PATH = "backup_file_path";
 	
 	public static final int REQUEST_RESTORE_FILENAME = 0;
+	public static final int REQUEST_LINK_TO_DBX = 1;
+	
+	private DbxAccountManager mDbxManager;
+	private DbxAccount mDbxAccount;
 
 	Intent frontdoor;
 	private Intent restartTimerIntent=null;
@@ -118,6 +134,16 @@ public class Restore extends Activity {
 			else
 				restore(backupPath);
 		}
+		
+		// sync dropbox first
+		mDbxManager = DbxAccountManager.getInstance(getApplicationContext(), "bp6ppi1j8e6dzjf", "3f3p6r81mm088j0");
+		mDbxAccount = null;
+		if (mDbxManager.hasLinkedAccount()) {
+			mDbxAccount = mDbxManager.getLinkedAccount();
+			syncDropbox();
+		} else {
+			mDbxManager.startLink(this, REQUEST_LINK_TO_DBX);
+		}
 	}
 
 	@Override
@@ -158,6 +184,70 @@ public class Restore extends Activity {
 		return true;
 	}
 
+	/**
+	 * Sync dropbox when activity start.
+	 */
+	public void syncDropbox() {
+		new Thread(new Runnable() {
+			public void run() {
+				Looper.prepare();
+				boolean syncOK = false;
+				try {
+					DbxFileSystem dbxFS = DbxFileSystem.forAccount(mDbxAccount);
+					dbxFS.syncNowAndWait();
+					syncOK = true;
+				} catch (Unauthorized e) {
+					e.printStackTrace();
+				} catch (DbxException e) {
+					e.printStackTrace();
+				}
+				if (syncOK)
+					Toast.makeText(Restore.this, "Dropbox sync complete.", Toast.LENGTH_SHORT).show();
+				else
+					Toast.makeText(Restore.this, "Dropbox sync fail.", Toast.LENGTH_LONG).show();
+				
+				Looper.loop();
+			}
+		}).start();
+	}
+	
+	/**
+	 * Get latest backup file, then restore it.
+	 * @param masterPassword
+	 * @return
+	 */
+	public boolean downloadDropbox(String masterPassword) {
+		DbxFile dbxFile = null;
+		try {
+			DbxFileSystem dbxFS = DbxFileSystem.forAccount(mDbxAccount);
+			if (dbxFS.getSyncStatus().anyInProgress())
+				return false;
+			
+			List<DbxFileInfo> lstFile = dbxFS.listFolder(DbxPath.ROOT);
+			String lastFilename = "";
+			DbxPath lastPath = null;
+			for (DbxFileInfo info : lstFile) {
+				if (info.path.getName().compareTo(lastFilename) > 0) {
+					lastFilename = info.path.getName();
+					lastPath = info.path;
+				}
+			}
+			if (lastPath==null)
+				return false;
+			
+			dbxFile = dbxFS.open(lastPath);
+			InputStreamReader isr = new InputStreamReader(dbxFile.getReadStream());
+			return read(isr, masterPassword);
+		} catch (IOException e) {
+			e.printStackTrace();
+		} finally {
+			if (dbxFile!=null)
+				dbxFile.close();
+		}
+		
+		return false;
+	}
+	
 	public boolean read(String filename, String masterPassword) {
 		if (debug) Log.d(TAG,"read("+filename+",)");
 
@@ -171,7 +261,10 @@ public class Restore extends Activity {
 				Toast.LENGTH_LONG).show();
 			return false;
 		}
-
+		return read(fr, masterPassword);
+	}
+	
+	public boolean read(Reader fr, String masterPassword) {
 		SAXParserFactory spf = SAXParserFactory.newInstance();
 		try {
 			SAXParser sp = spf.newSAXParser();
@@ -367,6 +460,13 @@ public class Restore extends Activity {
 				finish();
 			}
 			break;
+			
+		case REQUEST_LINK_TO_DBX:
+			if (resultCode == RESULT_OK) {
+				mDbxAccount = mDbxManager.getLinkedAccount();
+				syncDropbox();
+			}
+			break;
 		}
 	}
 	
@@ -403,7 +503,10 @@ public class Restore extends Activity {
 				passwordText = (EditText) findViewById(R.id.restore_password);
 
 				String masterPassword = passwordText.getText().toString();
-				read(filename, masterPassword);
+				if (mDbxAccount==null)
+					read(filename, masterPassword);
+				else
+					downloadDropbox(masterPassword);
 			}
 		});
 	}
