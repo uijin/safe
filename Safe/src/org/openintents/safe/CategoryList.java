@@ -42,12 +42,9 @@ import org.openintents.util.SecureDelete;
 
 import com.dropbox.sync.android.DbxAccount;
 import com.dropbox.sync.android.DbxAccountManager;
-import com.dropbox.sync.android.DbxException;
-import com.dropbox.sync.android.DbxException.Unauthorized;
 import com.dropbox.sync.android.DbxFile;
 import com.dropbox.sync.android.DbxFileSystem;
 import com.dropbox.sync.android.DbxPath;
-import com.dropbox.sync.android.DbxPath.InvalidPathException;
 
 import android.app.AlertDialog;
 import android.app.Dialog;
@@ -107,6 +104,7 @@ public class CategoryList extends ListActivity {
 	public static final int RESTORE_INDEX = Menu.FIRST + 11;
 	public static final int PREFERENCES_INDEX = Menu.FIRST + 12;
 	public static final int ABOUT_INDEX = Menu.FIRST + 13;
+	public static final int LINK_DROPBOX_INDEX = Menu.FIRST + 14;
 
 	public static final int REQUEST_ONCREATE = 0;
 	public static final int REQUEST_EDIT_CATEGORY = 1;
@@ -141,8 +139,6 @@ public class CategoryList extends ListActivity {
 	private AlertDialog autobackupDialog;
 	
 	private DbxAccountManager mDbxManager;
-	private DbxAccount mDbxAccount;
-	private String mTempFilename;
 	
 	private boolean lockOnScreenLock=true;
 	
@@ -504,6 +500,7 @@ public class CategoryList extends ListActivity {
 		menu.add(0, CHANGE_PASS_INDEX, 0, R.string.change_password)
 			.setIcon(android.R.drawable.ic_menu_manage);
 
+		menu.add(0, LINK_DROPBOX_INDEX, 0, R.string.link_dropbox);
 		menu.add(0, BACKUP_INDEX, 0, R.string.backup);
 		menu.add(0, RESTORE_INDEX, 0, R.string.restore);
 
@@ -545,6 +542,9 @@ public class CategoryList extends ListActivity {
 			// used when this is called from a ContextMenu
 			position=info.position;
 		}
+		
+		mDbxManager = DbxAccountManager.getInstance(getApplicationContext(), "bp6ppi1j8e6dzjf", "3f3p6r81mm088j0");
+		
 		switch(item.getItemId()) {
 		case LOCK_CATEGORY_INDEX:
 			lockAndShutFrontDoor();
@@ -609,8 +609,40 @@ public class CategoryList extends ListActivity {
 			Intent changePass = new Intent(this, ChangePass.class);
 			startActivity(changePass);
 			break;
+		case LINK_DROPBOX_INDEX:
+			AlertDialog.Builder dlg = new AlertDialog.Builder(this);
+			dlg.setTitle("Link to Dropbox")
+			.setMessage("Do you want to link or unlink dropbox account?")
+			.setIcon(android.R.drawable.ic_dialog_info)
+			.setPositiveButton("Link", new DialogInterface.OnClickListener() {
+				@Override
+				public void onClick(DialogInterface dialog, int which) {
+					if (!mDbxManager.hasLinkedAccount()) {
+						mDbxManager.startLink(CategoryList.this, REQUEST_LINK_TO_DBX);
+					} else {
+						Toast.makeText(CategoryList.this, "Already linked", Toast.LENGTH_SHORT).show();
+					}
+				}
+			})
+			.setNegativeButton("Unlink", new DialogInterface.OnClickListener() {
+				@Override
+				public void onClick(DialogInterface dialog, int which) {
+					if (mDbxManager.hasLinkedAccount()) {
+						mDbxManager.unlink();
+						Toast.makeText(CategoryList.this, "Unlink complete", Toast.LENGTH_SHORT).show();
+					} else {
+						Toast.makeText(CategoryList.this, "Not linked", Toast.LENGTH_SHORT).show();
+					}
+				}
+			}).show();
+			break;
 		case BACKUP_INDEX:
-			backupThreadStart();
+			if (mDbxManager.hasLinkedAccount()) {
+				Toast.makeText(CategoryList.this, "backup to dropbox", Toast.LENGTH_SHORT).show();
+				uploadDropbox();
+			} else {
+				backupThreadStart();
+			}
 			break;
 		case RESTORE_INDEX:
 			restoreDatabase();
@@ -638,16 +670,6 @@ public class CategoryList extends ListActivity {
 	private String backupDatabase(String filename){
 		Backup backup=new Backup(this);
 		backup.write(filename);
-
-		// upload file to Dropbox
-		mDbxManager = DbxAccountManager.getInstance(getApplicationContext(), "bp6ppi1j8e6dzjf", "3f3p6r81mm088j0");
-		if (mDbxManager.hasLinkedAccount()) {
-			uploadDropbox(filename);
-		} else {
-			mTempFilename = filename;
-			mDbxManager.startLink(this, REQUEST_LINK_TO_DBX);
-		}
-
 		return backup.getResult();
 	}
 	
@@ -655,15 +677,17 @@ public class CategoryList extends ListActivity {
 	 * upload backup database to Dropbox
 	 * @param filename
 	 */
-	private void uploadDropbox(String filename)
+	private void uploadDropbox()
 	{
-		mDbxAccount = mDbxManager.getLinkedAccount();
+		DbxAccount dbxAcc = mDbxManager.getLinkedAccount();
 		SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd_HH:mm:ss", Locale.getDefault());
 		try {
-			DbxFileSystem dbxFS = DbxFileSystem.forAccount(mDbxAccount);
+			DbxFileSystem dbxFS = DbxFileSystem.forAccount(dbxAcc);
 			StringBuffer sb = new StringBuffer("oisafe.").append(sdf.format(new Date())).append(".xml");
 			DbxFile destFile = dbxFS.create(new DbxPath(sb.toString()));
-			destFile.writeFromExistingFile(new File(filename), false);
+			
+			Backup backup = new Backup(this);
+			backup.write(destFile.getWriteStream());
 			destFile.close();
 		} catch (IOException e) {
 			e.printStackTrace();
@@ -820,7 +844,7 @@ public class CategoryList extends ListActivity {
 			
 		case REQUEST_LINK_TO_DBX:
 			if (resultCode == RESULT_OK) {
-				uploadDropbox(mTempFilename);  
+				Toast.makeText(CategoryList.this, "Dropbox link complete", Toast.LENGTH_LONG).show();
 			}
 			break;
 		}

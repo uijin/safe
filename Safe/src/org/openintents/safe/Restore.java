@@ -80,10 +80,8 @@ public class Restore extends Activity {
 	public static final String KEY_FILE_PATH = "backup_file_path";
 	
 	public static final int REQUEST_RESTORE_FILENAME = 0;
-	public static final int REQUEST_LINK_TO_DBX = 1;
 	
 	private DbxAccountManager mDbxManager;
-	private DbxAccount mDbxAccount;
 
 	Intent frontdoor;
 	private Intent restartTimerIntent=null;
@@ -137,12 +135,8 @@ public class Restore extends Activity {
 		
 		// sync dropbox first
 		mDbxManager = DbxAccountManager.getInstance(getApplicationContext(), "bp6ppi1j8e6dzjf", "3f3p6r81mm088j0");
-		mDbxAccount = null;
 		if (mDbxManager.hasLinkedAccount()) {
-			mDbxAccount = mDbxManager.getLinkedAccount();
 			syncDropbox();
-		} else {
-			mDbxManager.startLink(this, REQUEST_LINK_TO_DBX);
 		}
 	}
 
@@ -190,10 +184,10 @@ public class Restore extends Activity {
 	public void syncDropbox() {
 		new Thread(new Runnable() {
 			public void run() {
-				Looper.prepare();
 				boolean syncOK = false;
+				DbxAccount dbxAcc = mDbxManager.getLinkedAccount();
 				try {
-					DbxFileSystem dbxFS = DbxFileSystem.forAccount(mDbxAccount);
+					DbxFileSystem dbxFS = DbxFileSystem.forAccount(dbxAcc);
 					dbxFS.syncNowAndWait();
 					syncOK = true;
 				} catch (Unauthorized e) {
@@ -201,6 +195,7 @@ public class Restore extends Activity {
 				} catch (DbxException e) {
 					e.printStackTrace();
 				}
+				Looper.prepare();
 				if (syncOK)
 					Toast.makeText(Restore.this, "Dropbox sync complete.", Toast.LENGTH_SHORT).show();
 				else
@@ -218,8 +213,9 @@ public class Restore extends Activity {
 	 */
 	public boolean downloadDropbox(String masterPassword) {
 		DbxFile dbxFile = null;
+		DbxAccount dbxAcc = mDbxManager.getLinkedAccount();
 		try {
-			DbxFileSystem dbxFS = DbxFileSystem.forAccount(mDbxAccount);
+			DbxFileSystem dbxFS = DbxFileSystem.forAccount(dbxAcc);
 			if (dbxFS.getSyncStatus().anyInProgress())
 				return false;
 			
@@ -460,13 +456,6 @@ public class Restore extends Activity {
 				finish();
 			}
 			break;
-			
-		case REQUEST_LINK_TO_DBX:
-			if (resultCode == RESULT_OK) {
-				mDbxAccount = mDbxManager.getLinkedAccount();
-				syncDropbox();
-			}
-			break;
 		}
 	}
 	
@@ -503,10 +492,10 @@ public class Restore extends Activity {
 				passwordText = (EditText) findViewById(R.id.restore_password);
 
 				String masterPassword = passwordText.getText().toString();
-				if (mDbxAccount==null)
-					read(filename, masterPassword);
-				else
+				if (mDbxManager.hasLinkedAccount())
 					downloadDropbox(masterPassword);
+				else
+					read(filename, masterPassword);
 			}
 		});
 	}
